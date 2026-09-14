@@ -23,6 +23,18 @@ _UNIT_TO_DELTA = {
 _DATE_FORMATS = ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%d.%m.%Y %H:%M", "%d.%m.%Y")
 
 
+class DeadlineError(ValueError):
+    """Base class for deadline problems. Never raised directly."""
+
+
+class DeadlineFormatError(DeadlineError):
+    """Input does not look like any supported deadline format."""
+
+
+class DeadlinePastError(DeadlineError):
+    """Input parsed fine but points at a moment that has already passed."""
+
+
 @dataclass(frozen=True, slots=True)
 class DemoArgs:
     """Arguments of /demodraw: generated participants or an explicit id list."""
@@ -42,25 +54,39 @@ def parse_positive_int(raw: str | None, maximum: int) -> int | None:
     return value if 1 <= value <= maximum else None
 
 
-def parse_deadline(raw: str, now: datetime) -> datetime | None:
-    """Accept '2h', '30m', '3d', '2026-09-20 18:00' or '20.09.2026'. UTC, must be future."""
-    candidate = raw.strip()
-    relative = _RELATIVE_RE.match(candidate)
-    if relative is not None:
-        amount = int(relative.group(1))
-        unit = _UNIT_TO_DELTA[relative.group(2).lower()]
-        if amount <= 0:
-            return None
-        return now + timedelta(**{unit: amount})
+def parse_deadline(raw: str, now: datetime) -> datetime:
+    """Parse a deadline in UTC. A bare number means hours: '2' is now + 2h.
 
+    Raises:
+        DeadlineFormatError: the input matches none of the supported formats.
+        DeadlinePastError: the input is a valid moment, but not in the future.
+    """
+    candidate = raw.strip()
+    parsed = _parse_relative(candidate, now) or _parse_absolute(candidate)
+    if parsed is None:
+        raise DeadlineFormatError(candidate)
+    if parsed <= now:
+        raise DeadlinePastError(candidate)
+    return parsed
+
+
+def _parse_relative(candidate: str, now: datetime) -> datetime | None:
+    if candidate.isdigit():
+        return now + timedelta(hours=int(candidate))
+    match = _RELATIVE_RE.match(candidate)
+    if match is None:
+        return None
+    unit = _UNIT_TO_DELTA[match.group(2).lower()]
+    return now + timedelta(**{unit: int(match.group(1))})
+
+
+def _parse_absolute(candidate: str) -> datetime | None:
     for pattern in _DATE_FORMATS:
         try:
             parsed = datetime.strptime(candidate, pattern).replace(tzinfo=UTC)
         except ValueError:
             continue
-        if pattern == "%d.%m.%Y":
-            parsed = parsed.replace(hour=23, minute=59)
-        return parsed if parsed > now else None
+        return parsed.replace(hour=23, minute=59) if pattern == "%d.%m.%Y" else parsed
     return None
 
 

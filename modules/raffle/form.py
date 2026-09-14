@@ -16,6 +16,8 @@ from core.logging_setup import get_logger
 from modules.raffle.parsing import (
     MAX_TITLE_LENGTH,
     MAX_WINNERS,
+    DeadlineFormatError,
+    DeadlinePastError,
     parse_channels,
     parse_deadline,
     parse_positive_int,
@@ -31,7 +33,8 @@ STEP_TITLE = "Шаг 1/4. Пришлите название розыгрыша."
 STEP_WINNERS = f"Шаг 2/4. Сколько будет победителей? Число от 1 до {MAX_WINNERS}."
 STEP_DEADLINE = (
     "Шаг 3/4. До какого момента принимаем заявки?\n"
-    "Можно относительно: 30m, 2h, 3d. Можно точно: 2026-09-20 18:00 или 20.09.2026 (UTC)."
+    "Можно относительно: 30m, 2h, 3d. Можно точно: 2026-09-20 18:00 или 20.09.2026 (UTC).\n"
+    "Можно просто число — поймём как часы."
 )
 STEP_CHANNELS = (
     "Шаг 4/4. Каналы, подписку на которые проверяем при тираже.\n"
@@ -42,7 +45,8 @@ BAD_TITLE = (
     f"Название не должно быть пустым и длиннее {MAX_TITLE_LENGTH} символов. Попробуйте ещё раз."
 )
 BAD_WINNERS = f"Нужно целое число от 1 до {MAX_WINNERS}. Попробуйте ещё раз."
-BAD_DEADLINE = "Не понял дедлайн или он уже в прошлом. Примеры: 2h, 3d, 2026-09-20 18:00."
+BAD_DEADLINE_FORMAT = "Не понял формат. Примеры: 30m, 2h, 3d, 2026-09-20 18:00, 20.09.2026."
+BAD_DEADLINE_PAST = "Этот момент уже прошёл. Нужен дедлайн в будущем."
 BAD_CHANNELS = "Не разобрал ни одного канала. Пришлите @имя или id, либо нажмите кнопку."
 CANCELLED = "Создание розыгрыша отменено."
 NEEDS_TEXT = "Жду текстом, пожалуйста."
@@ -179,9 +183,13 @@ def register_new_raffle_form(
 
     @router.message(NewRaffleForm.deadline)
     async def set_deadline(message: Message, state: FSMContext) -> None:
-        deadline = parse_deadline(message.text or "", utcnow())
-        if deadline is None:
-            await message.answer(BAD_DEADLINE, reply_markup=cancel_keyboard())
+        try:
+            deadline = parse_deadline(message.text or "", utcnow())
+        except DeadlinePastError:
+            await message.answer(BAD_DEADLINE_PAST, reply_markup=cancel_keyboard())
+            return
+        except DeadlineFormatError:
+            await message.answer(BAD_DEADLINE_FORMAT, reply_markup=cancel_keyboard())
             return
         await state.update_data(deadline=deadline.isoformat())
         await state.set_state(NewRaffleForm.channels)
