@@ -30,8 +30,11 @@ jobs:
           ruff check .
           ruff format --check .
 
-      - name: Type check (mypy --strict on core/ and modules/)
-        run: mypy core modules
+      - name: Type check (mypy --strict on core/, modules/ and api/)
+        run: mypy core modules api
 
       - name: Tests (pytest)
         run: pytest -q
+
+      - name: API tests (FastAPI + httpx)
+        run: pytest -q tests/test_api_auth.py tests/test_api_raffles.py tests/test_raffle_watcher.py

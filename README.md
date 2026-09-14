@@ -8,7 +8,7 @@
 
 `botcore` — это композиционный корень и набор швов, а не готовый продукт. Ядро (`core/`) читает конфигурацию, настраивает логирование, подключает middleware, поднимает хранилище и запускает поллинг с корректным завершением. Функциональность добавляется модулями (`modules/`): каждый модуль отдаёт `Router`, регистрируется в реестре по имени и включается переменной окружения — ядро при этом не меняется.
 
-Сейчас в комплекте два модуля: `health` для проверки живости и `raffle` для розыгрышей.
+Сейчас в комплекте два модуля: `health` для проверки живости и `raffle` для розыгрышей. Поверх них есть HTTP-слой (`api/`) — отдельный процесс с FastAPI и JWT, через который розыгрышами можно управлять без Telegram.
 
 ## Быстрый старт
 
@@ -38,6 +38,11 @@ python -m core
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` или `CRITICAL`. Неизвестное значение — откат к `INFO`. |
 | `STORAGE_PATH` | `data/botcore.db` | Файл SQLite: хранилище ядра и таблицы модуля `raffle`. |
 | `RAFFLE_ADMIN_ID` | — | Telegram id администратора розыгрышей, можно несколько через запятую. Пусто — модуль `raffle` не поднимается. |
+| `RAFFLE_WATCH_INTERVAL` | `10` | Период опроса базы на розыгрыши из API, в секундах. Меньше `1` — откат к `10`. |
+| `API_JWT_SECRET` | — | Ключ подписи JWT. Обязателен для процесса API: без него он завершается с кодом `1`. |
+| `API_HOST` | `127.0.0.1` | Интерфейс HTTP-сервера. По умолчанию только локальный. |
+| `API_PORT` | `8000` | Порт HTTP-сервера. |
+| `API_REGISTRATION_OPEN` | `true` | `false` закрывает `POST /auth/register` после создания первого аккаунта. |
 
 Значения берутся из окружения процесса, а недостающие догружаются из файла `.env` в рабочей директории с `override=False` — то есть реальное окружение всегда побеждает файл. Сам `.env` в git не попадает, и его содержимое не пишется в логи: при старте логируется только путь к файлу.
 
@@ -75,33 +80,113 @@ python -m core
 
 Если бот не администратор канала, тираж не начинается: админ получает понятное сообщение, розыгрыш остаётся открытым, ничего не записывается. Данные лежат в шести таблицах: `raffles`, `participants`, `draws` и зеркальные `demo_raffles`, `demo_participants`, `demo_draws` — демо-режим отделён таблицами, а не колонкой-флагом, поэтому демонстрация не может задеть боевые данные.
 
+## API
+
+HTTP-слой для админского управления розыгрышами: создать розыгрыш и посмотреть результаты можно не открывая Telegram.
+
+### Архитектура и trade-off
+
+Бот и API — **два процесса поверх одной базы SQLite**, а не один процесс с двумя ролями:
+
+- `botcore` (`python -m core`) держит polling-сессию Telegram;
+- `botcore-api` (`python -m api`) держит HTTP-сервер;
+- общий файл `STORAGE_PATH` — единственный канал связи между ними: API пишет строку в таблицу `raffles` с `source='api'`, бот раз в `RAFFLE_WATCH_INTERVAL` секунд читает новые строки, шлёт админу уведомление, а после дедлайна проводит тираж и пишет протокол обратно в `draws`. Ответ виден в `GET /raffles/{id}`.
+
+Почему так, а не одним процессом с общим event loop: Telegram отдаёт апдейты ровно одному потребителю `getUpdates`, и любой рестарт HTTP-части (деплой, падение воркера, смена порта) рвал бы polling и давал `TelegramConflictError`. Разделение даёт независимые рестарты, независимые логи и возможность закрыть API в локальную сеть, не трогая бота.
+
+Цена решения, честно:
+
+- **Задержка.** Реакция бота на созданный через API розыгрыш — до `RAFFLE_WATCH_INTERVAL` секунд, а не мгновенно. Для розыгрышей с дедлайнами в часах это незаметно; для секундных сценариев такой мост не годится.
+- **SQLite под двумя писателями.** База открыта в режиме WAL с `busy_timeout=5000`, чего хватает при текущих объёмах (десятки запросов в минуту). Дальше — либо очередь, либо PostgreSQL; менять придётся только `repository.py`.
+- **Опрос вместо событий.** Бот опрашивает базу, а не получает уведомление. Это лишние дешёвые запросы, зато между процессами нет ни очереди, ни брокера, ни сети — и API продолжает принимать запросы, даже когда бот лежит.
+- **Бизнес-логика не раздваивается.** API не повторяет правила розыгрыша: он вызывает тот же `RaffleService`, что и Telegram-команды. Тираж по-прежнему умеет делать только бот — у него есть сессия Telegram для проверки подписок.
+
+### Запуск
+
+```bash
+python -c 'import secrets; print(secrets.token_urlsafe(48))'   # положите в API_JWT_SECRET
+python -m api
+```
+
+Без `API_JWT_SECRET` процесс печатает подсказку и завершается с кодом `1`. Swagger UI — на `http://localhost:8000/docs`, схема — на `/openapi.json`.
+
+### Эндпоинты
+
+| Метод и путь | Авторизация | Назначение |
+|---|---|---|
+| `POST /auth/register` | нет | Создать аккаунт админа; пароль хранится как bcrypt-хеш. |
+| `POST /auth/login` | нет | Получить пару токенов: access (15 минут) и refresh (7 дней). |
+| `POST /auth/refresh` | нет | Обменять refresh на новый access. |
+| `GET /raffles` | да | Список розыгрышей со статусом и числом участников. |
+| `POST /raffles` | да | Создать розыгрыш; бот подхватит его и проведёт тираж по дедлайну. |
+| `GET /raffles/{id}` | да | Детали: участники и протоколы тиражей. |
+| `GET /health` | нет | Проверка живости процесса. |
+
+### Аутентификация
+
+Токены — JWT (HS256, библиотека PyJWT), подписаны `API_JWT_SECRET`. Access живёт 15 минут, refresh — 7 дней; тип токена записан в claim `type`, поэтому refresh не примут вместо access и наоборот. Защищённые роуты требуют заголовок `Authorization: Bearer <access_token>`; без заголовка, с мусором, с просроченным токеном или с подписью от другого секрета ответ всегда `401`.
+
+Проверка сделана зависимостью FastAPI, а не middleware: она объявляется на конкретных роутах, попадает в OpenAPI (в Swagger работает кнопка **Authorize**) и не мешает публичным путям вроде `/docs` и `/health`.
+
+`POST /auth/register` открыт по умолчанию, чтобы завести первый аккаунт. Сразу после этого поставьте `API_REGISTRATION_OPEN=false` — первый аккаунт всё равно можно будет создать на пустой базе, а посторонние регистрации закроются. Сервер слушает `127.0.0.1`; наружу выставляйте только через reverse proxy с TLS.
+
+### Примеры curl
+
+```bash
+curl -X POST http://localhost:8000/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"username": "admin", "password": "СМЕНИТЕ-ЭТОТ-ПАРОЛЬ"}'
+
+TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username": "admin", "password": "СМЕНИТЕ-ЭТОТ-ПАРОЛЬ"}' | python -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+
+curl -X POST http://localhost:8000/raffles \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"title": "Розыгрыш через API", "winners_count": 1, "deadline_at": "2026-09-20T18:00:00Z", "channels": []}'
+
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/raffles
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/raffles/1
+```
+
+Дедлайн передаётся в ISO 8601; значение без таймзоны читается как UTC, дата в прошлом отвергается с кодом `422`. Обновление access-токена:
+
+```bash
+curl -X POST http://localhost:8000/auth/refresh \
+  -H 'Content-Type: application/json' \
+  -d '{"refresh_token": "<refresh>"}'
+```
+
 ## Тесты и качество
 
 ```bash
 ruff check .
 ruff format --check .
-mypy core modules
+mypy core modules api
 pytest -q
 ```
 
-`mypy` работает в режиме `strict` и покрывает и `core/`, и `modules/`. Те же четыре команды выполняет GitHub Actions на каждый push и pull request, на матрице Python 3.11 и 3.14.
+`mypy` работает в режиме `strict` и покрывает `core/`, `modules/` и `api/`. Те же четыре команды выполняет GitHub Actions на каждый push и pull request, на матрице Python 3.11 и 3.14. Тесты API поднимают приложение в процессе через `httpx.ASGITransport`, без сокета и uvicorn.
 
 ## Деплой
 
-Юнит systemd лежит в репозитории: `deploy/botcore.service`. Он запускает `python -m core` из каталога проекта, поэтому `.env` подхватывается оттуда же.
+Юниты systemd лежат в репозитории: `deploy/botcore.service` (бот) и `deploy/botcore-api.service` (HTTP API). Оба запускаются из каталога проекта, поэтому `.env` подхватывается оттуда же, и оба перезапускаются автоматически (`Restart=always`).
 
 ```bash
 install -m 644 deploy/botcore.service /etc/systemd/system/botcore.service
+install -m 644 deploy/botcore-api.service /etc/systemd/system/botcore-api.service
 systemctl daemon-reload
-systemctl enable --now botcore
+systemctl enable --now botcore botcore-api
 ```
 
 Рабочие команды:
 
 ```bash
-systemctl status botcore
-systemctl restart botcore
+systemctl status botcore botcore-api
+systemctl restart botcore-api
 journalctl -u botcore -f
+journalctl -u botcore-api -f
 ```
 
 ## Эксплуатационные правила
@@ -111,6 +196,8 @@ journalctl -u botcore -f
 **Остановка — это graceful shutdown.** По `SIGTERM` бот перестаёт забирать новые апдейты, дожидается тех, что уже в работе, закрывает хранилище и сессию Telegram. В логе это видно как `stop requested` → `Polling stopped` → `shutdown complete`.
 
 **`TimeoutStopSec=30`.** Столько systemd даёт боту на дренаж перед `SIGKILL`. Значение задано в юните; если хендлеры станут длиннее, увеличивайте его вместе с ними.
+
+**Два процесса, одна база.** `botcore` и `botcore-api` пишут в один файл SQLite в режиме WAL. Перезапускать их можно независимо: пока API лежит, бот продолжает вести розыгрыши, пока лежит бот — API принимает запросы, а отложенные тиражи пройдут после его возврата. Копировать базу на живых процессах нужно вместе с файлами `-wal` и `-shm` (или через `sqlite3 .backup`).
 
 ## Структура проекта
 
@@ -126,8 +213,16 @@ core/                 ядро, менять при добавлении мод�
 modules/
   health.py           /start, /help, ответ на неизвестную команду
   raffle/             розыгрыши: форма, вступление, тираж, демо-режим
+  raffle/watcher.py   фоновая задача: розыгрыши из API и автотираж
+api/                  HTTP-слой, отдельный процесс: python -m api
+  app.py              создание FastAPI-приложения
+  config.py           API_JWT_SECRET и прочее окружение, fail-fast
+  security.py         bcrypt и JWT (PyJWT)
+  schemas.py          pydantic-схемы запросов и ответов
+  routes/             /auth и /raffles
 deploy/
-  botcore.service     юнит systemd
+  botcore.service     юнит systemd для бота
+  botcore-api.service юнит systemd для API
 tests/                pytest и pytest-asyncio
 .github/workflows/
   ci.yml              ruff, mypy, pytest на 3.11 и 3.14
@@ -139,4 +234,4 @@ tests/                pytest и pytest-asyncio
 2. Опишите фабрику `create_router(context: ModuleContext) -> Router` — она возвращает `Router` со всеми хендлерами. Общие зависимости берите из DI aiogram: `BotApp` кладёт хранилище в `dispatcher["storage"]`, так что хендлер может объявить параметр `storage: StorageInterface`.
 3. Зарегистрируйте фабрику в `modules/__init__.py` внутри `build_default_registry()`.
 4. Включите модуль через `MODULES=<name>,health` — ваш модуль перед `health`, иначе его команды перехватит обработчик неизвестных сообщений.
-5. Добавьте тесты в `tests/` и убедитесь, что `ruff`, `mypy core modules` и `pytest` проходят локально.
+5. Добавьте тесты в `tests/` и убедитесь, что `ruff`, `mypy core modules api` и `pytest` проходят локально.
