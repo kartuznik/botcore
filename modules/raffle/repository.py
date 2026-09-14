@@ -17,6 +17,7 @@ from modules.raffle.models import (
     ExcludedParticipant,
     Participant,
     Raffle,
+    RaffleSource,
     RaffleStatus,
 )
 
@@ -57,7 +58,9 @@ class RaffleDatabase:
                 if parent.name or parent.is_absolute():
                     parent.mkdir(parents=True, exist_ok=True)
                 connection = await aiosqlite.connect(self._path)
+                # WAL plus a busy timeout: the bot and the API work with the same file.
                 await connection.execute("PRAGMA journal_mode=WAL")
+                await connection.execute("PRAGMA busy_timeout=5000")
                 await connection.commit()
                 self._connection = connection
         return connection
@@ -85,7 +88,18 @@ class RaffleRepository:
         connection = await self._database.connection()
         for statement in self._schema():
             await connection.execute(statement)
+        await self._add_missing_columns(connection)
         await connection.commit()
+
+    async def _add_missing_columns(self, connection: aiosqlite.Connection) -> None:
+        """Bring an older database up to date without a migration tool."""
+        async with connection.execute(f"PRAGMA table_info({self._tables.raffles})") as cursor:
+            columns = {str(row[1]) for row in await cursor.fetchall()}
+        if "source" not in columns:
+            await connection.execute(
+                f"ALTER TABLE {self._tables.raffles} "
+                f"ADD COLUMN source TEXT NOT NULL DEFAULT '{RaffleSource.BOT.value}'"
+            )
 
     async def create_raffle(
         self,
@@ -97,12 +111,13 @@ class RaffleRepository:
         created_by: int,
         created_at: datetime,
         status: RaffleStatus = RaffleStatus.OPEN,
+        source: RaffleSource = RaffleSource.BOT,
     ) -> Raffle:
         connection = await self._database.connection()
         cursor = await connection.execute(
             f"INSERT INTO {self._tables.raffles} "
-            "(title, winners_count, deadline_at, channels, status, created_by, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(title, winners_count, deadline_at, channels, status, created_by, created_at, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 title,
                 winners_count,
@@ -111,6 +126,7 @@ class RaffleRepository:
                 status.value,
                 created_by,
                 _to_iso(created_at),
+                source.value,
             ),
         )
         await connection.commit()
@@ -125,6 +141,7 @@ class RaffleRepository:
             status=status,
             created_by=created_by,
             created_at=created_at,
+            source=source,
         )
 
     async def get_raffle(self, raffle_id: int) -> Raffle | None:
@@ -275,7 +292,8 @@ class RaffleRepository:
                 channels TEXT NOT NULL,
                 status TEXT NOT NULL,
                 created_by INTEGER NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT '{RaffleSource.BOT.value}'
             )
             """,
             f"""
@@ -303,7 +321,9 @@ class RaffleRepository:
         )
 
 
-_RAFFLE_COLUMNS = "id, title, winners_count, deadline_at, channels, status, created_by, created_at"
+_RAFFLE_COLUMNS = (
+    "id, title, winners_count, deadline_at, channels, status, created_by, created_at, source"
+)
 
 
 def _to_iso(value: datetime) -> str:
@@ -327,6 +347,7 @@ def _row_to_raffle(row: Sequence[Any]) -> Raffle:
         status=RaffleStatus(str(row[5])),
         created_by=int(row[6]),
         created_at=_from_iso(str(row[7])),
+        source=RaffleSource(str(row[8])),
     )
 
 

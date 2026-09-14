@@ -15,6 +15,13 @@ class RaffleStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class RaffleSource(StrEnum):
+    """Who created the raffle: the Telegram form or the HTTP API."""
+
+    BOT = "bot"
+    API = "api"
+
+
 class JoinResult(StrEnum):
     """Outcome of an attempt to enter a raffle."""
 
@@ -35,6 +42,7 @@ class Raffle:
     status: RaffleStatus
     created_by: int
     created_at: datetime
+    source: RaffleSource = RaffleSource.BOT
 
 
 @dataclass(frozen=True, slots=True)

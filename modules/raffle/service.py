@@ -18,6 +18,7 @@ from modules.raffle.models import (
     JoinResult,
     Participant,
     Raffle,
+    RaffleSource,
     RaffleStatus,
     RaffleSummary,
 )
@@ -67,6 +68,7 @@ class RaffleService:
         deadline_at: datetime,
         channels: Sequence[str],
         created_by: int,
+        source: RaffleSource = RaffleSource.BOT,
     ) -> Raffle:
         return await self._repository.create_raffle(
             title=title,
@@ -75,6 +77,7 @@ class RaffleService:
             channels=channels,
             created_by=created_by,
             created_at=self._now(),
+            source=source,
         )
 
     async def list_raffles(self) -> list[RaffleSummary]:
