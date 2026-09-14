@@ -37,6 +37,13 @@ def build_unknown_text(text: str | None) -> str:
 
 def create_router(context: ModuleContext) -> Router:
     """Build the health Router bound to the given module context."""
+    modules = context.enabled_modules
+    if MODULE_NAME in modules and modules[-1] != MODULE_NAME:
+        logger.warning(
+            "health is not last in MODULES (%s): its catch-all handler will shadow commands "
+            "of the modules listed after it",
+            ", ".join(modules),
+        )
     router = Router(name=MODULE_NAME)
 
     @router.message(CommandStart())
