@@ -9,6 +9,7 @@ from pathlib import Path
 DEFAULT_DATABASE_PATH = "data/botcore.db"
 DEFAULT_DEMO_PARTICIPANTS = 10
 MAX_DEMO_PARTICIPANTS = 1000
+DEFAULT_WATCH_INTERVAL = 10.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +18,7 @@ class RaffleConfig:
 
     admin_ids: frozenset[int]
     database_path: Path
+    watch_interval: float = DEFAULT_WATCH_INTERVAL
 
 
 def parse_admin_ids(raw: str | None) -> frozenset[int]:
@@ -41,4 +43,17 @@ def load_raffle_config(env: Mapping[str, str]) -> RaffleConfig | None:
     if not admin_ids:
         return None
     database_path = env.get("STORAGE_PATH", "").strip() or DEFAULT_DATABASE_PATH
-    return RaffleConfig(admin_ids=admin_ids, database_path=Path(database_path))
+    return RaffleConfig(
+        admin_ids=admin_ids,
+        database_path=Path(database_path),
+        watch_interval=parse_watch_interval(env.get("RAFFLE_WATCH_INTERVAL")),
+    )
+
+
+def parse_watch_interval(raw: str | None) -> float:
+    """Seconds between background checks for API-created raffles."""
+    try:
+        interval = float((raw or "").strip())
+    except ValueError:
+        return DEFAULT_WATCH_INTERVAL
+    return interval if interval >= 1.0 else DEFAULT_WATCH_INTERVAL

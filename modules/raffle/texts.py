@@ -8,6 +8,7 @@ from modules.raffle.errors import ChannelAccessError
 from modules.raffle.models import (
     DrawOutcome,
     JoinResult,
+    Raffle,
     RaffleStatus,
     RaffleSummary,
 )
@@ -76,6 +77,29 @@ def render_demo_outcome(outcome: DrawOutcome) -> str:
     return (
         "Демо-тираж выполнен на демо-таблицах, боевые данные не затронуты.\n\n"
         f"{render_draw_outcome(outcome)}"
+    )
+
+
+def render_new_api_raffle(raffle: Raffle) -> str:
+    channels = ", ".join(raffle.channels) if raffle.channels else "без условия подписки"
+    return (
+        f"Через API создан розыгрыш #{raffle.id} — {raffle.title}\n"
+        f"  победителей: {raffle.winners_count}\n"
+        f"  дедлайн: {raffle.deadline_at:%d.%m.%Y %H:%M} UTC\n"
+        f"  условие: {channels}\n"
+        f"Участники вступают командой /join {raffle.id}, "
+        "тираж пройдёт автоматически после дедлайна."
+    )
+
+
+def render_auto_draw(outcome: DrawOutcome) -> str:
+    return f"Автоматический тираж по дедлайну.\n\n{render_draw_outcome(outcome)}"
+
+
+def render_auto_draw_cancelled(raffle: Raffle) -> str:
+    return (
+        f"Розыгрыш #{raffle.id} — {raffle.title}: дедлайн прошёл, "
+        "но допущенных участников нет. Розыгрыш закрыт без победителей."
     )
 
 

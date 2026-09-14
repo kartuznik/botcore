@@ -10,6 +10,7 @@ from aiogram.types import Message
 
 from core.logging_setup import get_logger
 from core.registry import ModuleContext
+from core.storage import StorageInterface
 from modules.raffle.config import DEFAULT_DEMO_PARTICIPANTS, RaffleConfig, load_raffle_config
 from modules.raffle.errors import ChannelAccessError, RaffleError
 from modules.raffle.form import register_new_raffle_form
@@ -27,6 +28,7 @@ from modules.raffle.texts import (
     render_draw_outcome,
     render_raffle_list,
 )
+from modules.raffle.watcher import RaffleWatcher
 
 MODULE_NAME = "raffle"
 MAX_RAFFLE_ID = 10_000_000
@@ -49,18 +51,53 @@ def create_router(context: ModuleContext) -> Router:
     live = RaffleService(RaffleRepository(database, LIVE_TABLES))
     demo = RaffleService(RaffleRepository(database, DEMO_TABLES))
 
-    async def prepare_tables() -> None:
-        await live.repository.init()
-        await demo.repository.init()
-        logger.info("raffle tables ready in %s", config.database_path)
-
-    router.startup.register(prepare_tables)
-    router.shutdown.register(database.close)
+    runtime = _RaffleRuntime(database=database, live=live, demo=demo, config=config)
+    router.startup.register(runtime.on_startup)
+    router.shutdown.register(runtime.on_shutdown)
 
     register_new_raffle_form(router, service=live, admin_ids=config.admin_ids)
     _register_commands(router, live=live, demo=demo, config=config)
     logger.info("raffle module enabled for %s admin(s)", len(config.admin_ids))
     return router
+
+
+class _RaffleRuntime:
+    """Owns the database connection and the background watcher between startup and shutdown."""
+
+    def __init__(
+        self,
+        *,
+        database: RaffleDatabase,
+        live: RaffleService,
+        demo: RaffleService,
+        config: RaffleConfig,
+    ) -> None:
+        self._database = database
+        self._live = live
+        self._demo = demo
+        self._config = config
+        self._watcher: RaffleWatcher | None = None
+
+    async def on_startup(self, bot: Bot, storage: StorageInterface) -> None:
+        await self._live.repository.init()
+        await self._demo.repository.init()
+        logger.info("raffle tables ready in %s", self._config.database_path)
+        watcher = RaffleWatcher(
+            service=self._live,
+            sender=bot,
+            checker=TelegramSubscriptionChecker(bot),
+            storage=storage,
+            admin_ids=self._config.admin_ids,
+            interval=self._config.watch_interval,
+        )
+        watcher.start()
+        self._watcher = watcher
+
+    async def on_shutdown(self) -> None:
+        if self._watcher is not None:
+            await self._watcher.stop()
+            self._watcher = None
+        await self._database.close()
 
 
 def _register_commands(
