@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "botcore"
+version = "0.1.0"
+description = "Telegram bot skeleton: composition root, module registry, storage seam"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiogram>=3.7,<4",
+    "aiosqlite>=0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.10",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+botcore = "core.__main__:main"
+
+[tool.setuptools]
+packages = ["core", "modules"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["ANN", "B", "E", "F", "I", "RUF", "SIM", "UP", "W"]
+# RUF001-003: user-facing texts are in Russian, Cyrillic is not a confusable here.
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ANN401"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["core"]
+strict = true
+warn_unreachable = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
