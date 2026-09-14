@@ -29,6 +29,10 @@ tests/              # pytest + pytest-asyncio
 | `LOG_LEVEL` | нет | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL`. Неизвестное значение — откат к `INFO`. |
 | `STORAGE_PATH` | нет | `data/botcore.db` | Файл SQLite для `SqliteStorage`. |
 
+Значения читаются из окружения, а недостающие — из файла `.env` в рабочей директории
+(шаблон: `.env.example`). Переменные окружения имеют приоритет над файлом, сам `.env`
+в git не попадает, и его содержимое никогда не пишется в логи.
+
 ## Запуск
 
 ```bash
@@ -36,7 +40,7 @@ python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 
-export BOT_TOKEN=123456:your-token
+cp .env.example .env          # и вписать BOT_TOKEN
 python -m core
 ```
 

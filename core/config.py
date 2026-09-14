@@ -5,7 +5,11 @@ from __future__ import annotations
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
+from dotenv import load_dotenv
+
+DEFAULT_ENV_FILE = Path(".env")
 DEFAULT_MODULES: tuple[str, ...] = ("health",)
 DEFAULT_LOG_LEVEL = "INFO"
 DEFAULT_STORAGE_PATH = "data/botcore.db"
@@ -31,6 +35,19 @@ class Settings:
     modules: tuple[str, ...]
     log_level: str
     storage_path: str
+
+
+def load_env_file(path: Path | None = None) -> Path | None:
+    """Merge a .env file into the process environment; real env vars win.
+
+    Returns the file that was read, or None when there is none. Values are never
+    logged or printed — only the path is reported to the caller.
+    """
+    env_file = DEFAULT_ENV_FILE if path is None else path
+    if not env_file.is_file():
+        return None
+    load_dotenv(env_file, override=False)
+    return env_file
 
 
 def load_settings(env: Mapping[str, str]) -> Settings:

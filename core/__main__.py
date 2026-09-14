@@ -9,7 +9,7 @@ import sys
 from aiogram.exceptions import TelegramUnauthorizedError
 
 from core.app import BotApp
-from core.config import load_settings_or_exit
+from core.config import load_env_file, load_settings_or_exit
 from core.logging_setup import get_logger, setup_logging
 from core.registry import UnknownModuleError
 from core.storage import SqliteStorage
@@ -17,9 +17,12 @@ from modules import build_default_registry
 
 
 def main() -> int:
+    env_file = load_env_file()
     settings = load_settings_or_exit(os.environ)
     setup_logging(settings.log_level)
     logger = get_logger("core.main")
+    if env_file is not None:
+        logger.info("environment file loaded: %s", env_file)
 
     app = BotApp(
         settings=settings,
