@@ -41,7 +41,7 @@ python -m core
 | `RAFFLE_WATCH_INTERVAL` | `10` | Период опроса базы на розыгрыши из API, в секундах. Меньше `1` — откат к `10`. |
 | `API_JWT_SECRET` | — | Ключ подписи JWT. Обязателен для процесса API: без него он завершается с кодом `1`. |
 | `API_HOST` | `127.0.0.1` | Интерфейс HTTP-сервера. По умолчанию только локальный. |
-| `API_PORT` | `8000` | Порт HTTP-сервера. |
+| `API_PORT` | `8020` | Порт HTTP-сервера. |
 | `API_REGISTRATION_OPEN` | `true` | `false` закрывает `POST /auth/register` после создания первого аккаунта. |
 
 Значения берутся из окружения процесса, а недостающие догружаются из файла `.env` в рабочей директории с `override=False` — то есть реальное окружение всегда побеждает файл. Сам `.env` в git не попадает, и его содержимое не пишется в логи: при старте логируется только путь к файлу.
@@ -108,7 +108,9 @@ python -c 'import secrets; print(secrets.token_urlsafe(48))'   # положит�
 python -m api
 ```
 
-Без `API_JWT_SECRET` процесс печатает подсказку и завершается с кодом `1`. Swagger UI — на `http://localhost:8000/docs`, схема — на `/openapi.json`.
+Без `API_JWT_SECRET` процесс печатает подсказку и завершается с кодом `1`. Swagger UI — на `http://localhost:8020/docs`, схема — на `/openapi.json`.
+
+Порт `8020` выбран по таблице портов в `/opt/bots/PROJECTS.md`: `8000` на этом сервере числится за `rag-telegram-bot` (сейчас контейнеры остановлены, но правило `ufw` и документация порт держат), поэтому занимать его нельзя.
 
 ### Эндпоинты
 
@@ -133,27 +135,27 @@ python -m api
 ### Примеры curl
 
 ```bash
-curl -X POST http://localhost:8000/auth/register \
+curl -X POST http://localhost:8020/auth/register \
   -H 'Content-Type: application/json' \
   -d '{"username": "admin", "password": "СМЕНИТЕ-ЭТОТ-ПАРОЛЬ"}'
 
-TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
+TOKEN=$(curl -s -X POST http://localhost:8020/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username": "admin", "password": "СМЕНИТЕ-ЭТОТ-ПАРОЛЬ"}' | python -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
 
-curl -X POST http://localhost:8000/raffles \
+curl -X POST http://localhost:8020/raffles \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"title": "Розыгрыш через API", "winners_count": 1, "deadline_at": "2026-09-20T18:00:00Z", "channels": []}'
 
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/raffles
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/raffles/1
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8020/raffles
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8020/raffles/1
 ```
 
 Дедлайн передаётся в ISO 8601; значение без таймзоны читается как UTC, дата в прошлом отвергается с кодом `422`. Обновление access-токена:
 
 ```bash
-curl -X POST http://localhost:8000/auth/refresh \
+curl -X POST http://localhost:8020/auth/refresh \
   -H 'Content-Type: application/json' \
   -d '{"refresh_token": "<refresh>"}'
 ```

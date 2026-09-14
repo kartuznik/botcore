@@ -10,7 +10,7 @@ from pathlib import Path
 
 DEFAULT_DATABASE_PATH = "data/botcore.db"
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 8000
+DEFAULT_PORT = 8020
 ACCESS_TOKEN_TTL = timedelta(minutes=15)
 REFRESH_TOKEN_TTL = timedelta(days=7)
 JWT_ALGORITHM = "HS256"
