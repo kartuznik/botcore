@@ -1,0 +1,20 @@
+[Unit]
+Description=botcore Telegram bot (aiogram 3)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/bots/botcore
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/bots/botcore/.venv/bin/python -m core
+Restart=always
+RestartSec=10
+# SIGTERM запускает graceful shutdown: бот дожидается текущих апдейтов,
+# закрывает хранилище и сессию Telegram. 30 секунд — запас на этот дренаж.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

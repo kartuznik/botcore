@@ -71,6 +71,24 @@ pytest -q
 Те же три шага выполняет GitHub Actions (`.github/workflows/ci.yml`) на каждый push и pull request,
 на Python 3.11 и 3.14.
 
+## Деплой на сервер (systemd)
+
+```bash
+install -m 644 deploy/botcore.service /etc/systemd/system/botcore.service
+systemctl daemon-reload
+systemctl enable --now botcore
+journalctl -u botcore -f
+```
+
+Юнит запускает `python -m core` из рабочей директории проекта, поэтому `.env` подхватывается
+оттуда же. `Restart=always` поднимает бота после падения, а `TimeoutStopSec=30` даёт ему дожать
+текущие апдейты при остановке — `systemctl stop` и `restart` проходят через штатный graceful
+shutdown.
+
+Одновременно должен работать **ровно один** экземпляр бота: Telegram отдаёт апдейты одному
+потребителю `getUpdates`, и второй процесс с тем же токеном получит `TelegramConflictError`.
+Перед запуском сервиса убедитесь, что нет забытых ручных запусков.
+
 ## Как добавить модуль
 
 1. Создайте `modules/<name>.py` с `MODULE_NAME` и фабрикой `create_router(context: ModuleContext) -> Router`.
