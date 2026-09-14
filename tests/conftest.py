@@ -12,7 +12,11 @@ import pytest
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
 from aiogram.types import Chat, Message, Update, User
+from httpx import ASGITransport, AsyncClient
 
+from api.app import create_app
+from api.config import ApiSettings
+from api.container import ApiContainer
 from modules.raffle.errors import ChannelAccessError
 from modules.raffle.models import Raffle
 from modules.raffle.repository import DEMO_TABLES, LIVE_TABLES, RaffleDatabase, RaffleRepository
@@ -20,6 +24,8 @@ from modules.raffle.service import RaffleService
 
 TEST_TOKEN = "42:TEST-TOKEN"
 ADMIN_ID = 777
+API_USERNAME = "admin"
+API_PASSWORD = "very-secret-password"
 
 
 class RecordingSession(BaseSession):
@@ -115,6 +121,62 @@ async def raffle_env(tmp_path: Path) -> AsyncGenerator[RaffleEnv, None]:
         )
     finally:
         await database.close()
+
+
+class RecordingSender:
+    """MessageSender double: keeps what the watcher wanted to send to admins."""
+
+    def __init__(self) -> None:
+        self.messages: list[tuple[int, str]] = []
+
+    async def send_message(self, chat_id: int, text: str) -> object:
+        self.messages.append((chat_id, text))
+        return None
+
+    @property
+    def texts(self) -> list[str]:
+        return [text for _chat_id, text in self.messages]
+
+
+@pytest.fixture
+def api_settings(tmp_path: Path) -> ApiSettings:
+    # Long enough to keep PyJWT from warning about weak HMAC keys.
+    return ApiSettings(jwt_secret="test-secret-" * 4, database_path=tmp_path / "api.db")
+
+
+@pytest.fixture
+async def api_client(api_settings: ApiSettings) -> AsyncGenerator[AsyncClient, None]:
+    """httpx client bound to the app in-process; no socket, no uvicorn."""
+    app = create_app(api_settings)
+    container: ApiContainer = app.state.container
+    await container.init()
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://api.test",
+        ) as client:
+            yield client
+    finally:
+        await container.close()
+
+
+async def register_and_login(
+    client: AsyncClient,
+    username: str = API_USERNAME,
+    password: str = API_PASSWORD,
+) -> dict[str, str]:
+    """Create an account and return its token pair."""
+    credentials = {"username": username, "password": password}
+    await client.post("/auth/register", json=credentials)
+    response = await client.post("/auth/login", json=credentials)
+    tokens: dict[str, str] = response.json()
+    return tokens
+
+
+@pytest.fixture
+async def auth_headers(api_client: AsyncClient) -> dict[str, str]:
+    tokens = await register_and_login(api_client)
+    return {"Authorization": f"Bearer {tokens['access_token']}"}
 
 
 def make_update(text: str, update_id: int = 1) -> Update:
