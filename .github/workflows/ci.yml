@@ -30,8 +30,8 @@ jobs:
           ruff check .
           ruff format --check .
 
-      - name: Type check (mypy --strict on core/)
-        run: mypy core
+      - name: Type check (mypy --strict on core/ and modules/)
+        run: mypy core modules
 
       - name: Tests (pytest)
         run: pytest -q

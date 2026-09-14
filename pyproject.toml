@@ -42,7 +42,7 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.mypy]
 python_version = "3.11"
-files = ["core"]
+files = ["core", "modules"]
 strict = true
 warn_unreachable = true
 
